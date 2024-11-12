@@ -1,0 +1,25 @@
+{
+  "provides" : "readline",
+  "targets" : {
+    "freebsd-x64" : {
+      "link-args" : [],
+      "dependencies" : [],
+      "linked-libraries" : ["readline"]
+    },
+    "linux-x64" : {
+      "link-args" : [],
+      "dependencies" : [],
+      "linked-libraries" : ["readline"]
+    },
+    "macos-x64" : {
+      "link-args" : [],
+      "dependencies" : [],
+      "linked-libraries" : ["readline"]
+    },
+    "openbsd-x64" : {
+      "link-args" : [],
+      "dependencies" : [],
+      "linked-libraries" : ["readline"]
+    },
+  }
+}

@@ -1,0 +1,515 @@
+module readline @if(!env::WIN32);
+import libc;
+import std::time;
+
+//===----------------------------------------------------------------------===//
+// readline/chardefs.h
+//===----------------------------------------------------------------------===//
+
+macro whitespace(c) @if(!$defined(whitespace))
+{
+    return (c == ' ') || (c == '\t');
+}
+
+/* Some character stuff */
+
+// Smaller than this is control
+const char CONTROL_CHARACTER_THRESHOLD @extern("control_character_threshold") = 0x20;
+
+// 0x20 - 1
+const char CONTROL_CHARACTER_MASK @extern("control_character_mask") = 0x1f;
+
+// Larger than this is Meta
+const char META_CHARACTER_THRESHOLD @extern("meta_character_threshold") = 0x07f;
+
+// 0x000000, must be off
+const char CONTROL_CHARACTER_BIT @extern("control_character_bit") = 0x40;
+
+// x0000000, must be on
+const char META_CHARACTER_BIT @extern("meta_character_bit") = 0x080;
+
+// Largest character value
+const char LARGEST_CHAR @extern("largest_char") = 255;
+
+macro ctrl_char(c)
+{
+    return (c < CONTROL_CHARACTER_THRESHOLD) && ((c & 0x80) == 0);
+}
+
+macro meta_char(c)
+{
+    return (c > META_CHARACTER_THRESHOLD) && (c <= LARGEST_CHAR);
+}
+
+macro ctrl(c)
+{
+    return c & CONTROL_CHARACTER_MASK;
+}
+
+macro meta(c)
+{
+    return c | META_CHARACTER_BIT;
+}
+
+macro unmeta(c)
+{
+    return c & (~META_CHARACTER_BIT);
+}
+
+macro unctrl(c)
+{
+    return _rl_to_upper(c | CONTROL_CHARACTER_BIT);
+}
+
+macro non_negative(c)
+{
+    return (char)c == c;
+}
+
+/* Beware : These only work with single-byte ASCII characters */
+
+macro isalnum(c)
+{
+    return isalpha(c) || isdigit(c);
+}
+
+macro isalpha(c)
+{
+    return islower(c) || isupper(c);
+}
+
+macro isdigit(c)
+{
+    return c >= '0' && c <= '9';
+}
+
+macro islower(c)
+{
+    return c >= 'a' && c <= 'z';
+}
+
+macro isupper(c)
+{
+    return c >= 'A' && c <= 'Z';
+}
+
+macro isxdigit(c) @if(!$defined(isxdigit))
+{
+    return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+macro _lowercase_p(c)
+{
+    return non_negative(c) && islower(c);
+}
+
+macro _uppercase_p(c)
+{
+    return non_negative(c) && isupper(c);
+}
+
+macro _alphabetic_p(c)
+{
+    return non_negative(c) && isalnum(c);
+}
+
+macro _pure_alphabetic(c)
+{
+    return non_negative(c) && isalpha(c);
+}
+
+macro _to_upper(c) @if(!$defined(_to_upper))
+{
+    return _lowercase_p(c) ? toupper(c) : c;
+}
+
+macro _to_lower(c) @if(!$defined(_to_lower))
+{
+    return _uppercase_p(c) ? tolower(c) : c;
+}
+
+macro _digit_value(x) @if(!$defined(_digit_value))
+{
+    return x - '0';
+}
+
+macro _isident(c) @if(!$defined(_isident))
+{
+    return isalnum(c) || c == '_';
+}
+
+macro isoctal(c) @if(!$defined(isoctal))
+{
+    return c >= '0' && c <= '7';
+}
+
+macro octvalue(c)
+{
+    return c - '0';
+}
+
+macro hexvalue(c)
+{
+    return (c >= 'a' && c <= 'f')
+        ? (c - 'a' + 10)
+        : (c >= 'A' && c <= 'F' ? (c - 'A' + 10) : (c = '0'));
+}
+
+const NEWLINE @if(!$defined(NEWLINE)) = '\n';
+
+macro _return() @if(!$defined(_return))
+{
+    return ctrl('M');
+}
+
+const RUBOUT @if(!$defined(RUBOUT)) = 0x7f;
+const TAB @if(!$defined(TAB)) = '\t';
+
+macro abort_char() @if(!$defined(abort_char))
+{
+    return ctrl('G');
+}
+
+macro page() @if(!$defined(page))
+{
+    return ctrl('L');
+}
+
+macro esc() @if(!$defined(esc))
+{
+    return ctrl('[');
+}
+
+//===----------------------------------------------------------------------===//
+// readline/history.h
+//===----------------------------------------------------------------------===//
+
+def HistData = void * @if(env::LIBC);
+def HistData = char * @if(!env::LIBC);
+
+/* The structure used to store a history entry */
+struct HistEntry @extern("HIST_ENTRY")
+{
+    char *line;
+    char *timestamp;
+    HistData data;
+}
+
+/* Size of the history-library-managed space in histroy entry HS */
+macro histent_bytes(hs) @if(env::LIBC)
+{
+    return libc::strlen(hs.line) + libc::strlen(hs.timestamp);
+}
+
+/* Size of the history-library-managed space in histroy entry HS */
+macro histent_bytes(hs) @if(!env::LIBC)
+{
+    return ((ZString)hs.line).len() + ((ZString)hs.timestamp).len();
+}
+
+/* A structure used to pass the current state of the history stuff around */
+struct HistoryState @extern("HISTORY_STATE")
+{
+    HistEntry **entries;    /* Pointer to the entries themselves */
+    int offset;             /* The location pointer within this array */
+    int length;             /* Number of elements within this array */
+    int size;               /* Number of slots allocated to this array */
+    int flags;
+}
+
+/* Flag values for the 'flags' member of HISTORY_STATE */
+const HS_STIFLED = 0x01;
+
+/* Initialization and state management */
+
+/*
+ * Begin a session in which the history functions might be used.
+ * This just initializes the interactive variables.
+*/
+extern fn void using_history();
+
+/* Return the current HISTORY_STATE of the history */
+extern fn HistoryState *history_get_history_state();
+
+/* Set the state of the current history state to STATE */
+extern fn void history_set_history_state(HistoryState *);
+
+/* Manage the history list */
+
+/*
+ * Place STRING at the end of the history list.
+ * The associated data field (if any) is set to NULL.
+*/
+extern fn void add_history(char *);
+
+/*
+ * Change the timestamp associated with the most recent history
+ * entry to STRING.
+*/
+extern fn void add_history_time(char *);
+
+/*
+ * Remove an entry from the history list. WHICH is the magic number that
+ * tells us which element to delete. The elements are numbered from 0.
+*/
+extern fn HistEntry *remove_history(int);
+
+/* Remove a set of entries from the history list: FIRST to LAST, inclusive */
+extern fn HistEntry **remove_history_range(int, int);
+
+extern fn HistEntry *alloc_history_entry(char *, char *);
+extern fn HistEntry *copy_history_entry(HistEntry *);
+extern fn HistData free_history_entry(HistEntry *);
+extern fn HistEntry *replace_history_entry(int, char *, HistData);
+extern fn void clear_history();
+extern fn void stifle_history(int);
+extern fn int unstifle_history();
+extern fn int history_is_stifled();
+extern fn HistEntry **history_list();
+extern fn int where_history();
+extern fn HistEntry *current_history();
+extern fn HistEntry *history_get(int);
+extern fn Time *history_get_time(HistEntry *);
+extern fn int history_total_bytes();
+extern fn int history_set_pos(int);
+extern fn HistEntry *previous_history();
+extern fn HistEntry *next_history();
+extern fn int history_search(char *, int);
+extern fn int history_search_prefix(char *, int);
+extern fn int history_search_pos(char *, int, int);
+extern fn int read_history(char *);
+extern fn int read_history_range(char *, int, int);
+extern fn int write_history(char *);
+extern fn int append_history(int, char *);
+extern fn int history_truncate_file(char *, int);
+extern fn int history_expand(char *, char **);
+extern fn char *history_arg_extract(int, int, char *);
+extern fn char *get_history_event(char *, int *, int);
+extern fn char **history_tokenize(char *);
+
+extern int history_base;
+extern int history_length;
+extern int history_max_entries;
+extern int history_offset;
+extern int history_lines_read_from_file;
+extern int history_lines_written_to_file;
+extern char history_expansion_char;
+extern char history_subst_char;
+extern char *history_word_delimiters;
+extern char history_comment_char;
+extern char *history_no_expand_chars;
+extern char *history_search_delimiter_chars;
+extern int history_quotes_inhibit_expansion;
+extern int history_quoting_state;
+extern int history_write_timestamps;
+
+//===----------------------------------------------------------------------===//
+// readline/keymaps.h
+//===----------------------------------------------------------------------===//
+
+//===----------------------------------------------------------------------===//
+// readline/readline.h
+//===----------------------------------------------------------------------===//
+
+/* Bindable commands for numeric arguments. */
+extern fn int digit_argument(int, int) @extern("rl_digit_argument");
+extern fn int universal_argument(int, int) @extern("rl_universal_argument");
+
+/* Bindable commands for moving the cursor. */
+extern fn int forward_byte(int, int) @extern("rl_forward_byte");
+extern fn int forward_char(int, int) @extern("rl_forward_char");
+extern fn int forward(int, int) @extern("rl_forward");
+extern fn int backward_byte(int, int) @extern("rl_backward_byte");
+extern fn int backward_char(int, int) @extern("rl_backward_char");
+extern fn int backward(int, int) @extern("rl_backward");
+extern fn int beg_of_line(int, int) @extern("rl_beg_of_line");
+extern fn int end_of_line(int, int) @extern("rl_end_of_line");
+extern fn int forward_word(int, int) @extern("rl_forward_word");
+extern fn int backward_word(int, int) @extern("rl_backward_word");
+extern fn int refresh_line(int, int) @extern("rl_refresh_line");
+extern fn int clear_screen(int, int) @extern("rl_clear_screen");
+extern fn int clear_display(int, int) @extern("rl_clear_display");
+extern fn int skip_csi_sequence(int, int) @extern("rl_skip_csi_sequence");
+extern fn int arrow_keys(int, int) @extern("rl_arrow_keys");
+extern fn int previous_screen_line(int, int) @extern("rl_previous_screen_line");
+extern fn int next_screen_line(int, int) @extern("rl_next_screen_line");
+
+/* Bindable commands for inserting and deleting text. */
+extern fn int insert(int, int) @extern("rl_insert");
+extern fn int quoted_insert(int, int) @extern("rl_quoted_insert");
+extern fn int tab_insert(int, int) @extern("rl_tab_insert");
+extern fn int newline(int, int) @extern("rl_newline");
+extern fn int do_lowercase_version(int, int) @extern("rl_do_lowercase_version");
+extern fn int rubout(int, int) @extern("rl_rubout");
+extern fn int delete(int, int) @extern("rl_delete");
+extern fn int rubout_or_delete(int, int) @extern("rl_rubout_or_delete");
+extern fn int delete_horizontal_space(int, int) @extern("rl_delete_horizontal_space");
+extern fn int delete_or_show_completions(int, int) @extern("rl_delete_or_show_completions");
+extern fn int insert_comment(int, int) @extern("rl_insert_comment");
+
+/* Bindable commands for changing case. */
+extern fn int upcase_word(int, int) @extern("rl_upcase_word");
+extern fn int downcase_word(int, int) @extern("rl_downcase_word");
+extern fn int capitalize_word(int, int) @extern("rl_capitalize_word");
+
+/* Bindable commands for transposing characters and words. */
+extern fn int transpose_words(int, int) @extern("rl_transpose_words");
+extern fn int transpose_chars(int, int) @extern("rl_transpose_chars");
+
+/* Bindable commands for searching within a line. */
+extern fn int char_search(int, int) @extern("rl_char_search");
+extern fn int backward_char_search(int, int) @extern("rl_backward_char_search");
+
+/* Bindable commands for readline's interface to the command history. */
+extern fn int beginning_of_history(int, int) @extern("rl_beginning_of_history");
+extern fn int end_of_history(int, int) @extern("rl_end_of_history");
+extern fn int get_next_history(int, int) @extern("rl_get_next_history");
+extern fn int get_previous_history(int, int) @extern("rl_get_previous_history");
+extern fn int operate_and_get_next(int, int) @extern("rl_operate_and_get_next");
+extern fn int fetch_history(int, int) @extern("rl_fetch_history");
+
+/* Bindable commands for managing the mark and region. */
+extern fn int set_mark(int, int) @extern("rl_set_mark");
+extern fn int exchange_point_and_mark(int, int) @extern("rl_exchange_point_and_mark");
+
+/* Bindable commands to set the editing mode (emacs or vi). */
+extern fn int vi_editing_mode(int, int) @extern("rl_vi_editing_mode");
+extern fn int emacs_editing_mode(int, int) @extern("rl_emacs_editing_mode");
+
+/* Bindable commands to change the insert mode (insert or overwrite) */
+extern fn int overwrite_mode(int, int) @extern("rl_overwrite_mode");
+
+/* Bindable commands for managing key bindings. */
+extern fn int re_read_init_file(int, int) @extern("rl_re_read_init_file");
+extern fn int dump_functions(int, int) @extern("rl_dump_functions");
+extern fn int dump_macros(int, int) @extern("rl_dump_macros");
+extern fn int dump_variables(int, int) @extern("rl_dump_variables");
+
+/* Bindable commands for word completion. */
+extern fn int complete(int, int) @extern("rl_complete");
+extern fn int possible_completions(int, int) @extern("rl_possible_completions");
+extern fn int insert_completions(int, int) @extern("rl_insert_completions");
+extern fn int old_menu_complete(int, int) @extern("rl_old_menu_complete");
+extern fn int menu_complete(int, int) @extern("rl_menu_complete");
+extern fn int backward_menu_complete(int, int) @extern("rl_backward_menu_complete");
+
+/* Bindable commands for killing and yanking text, and managing the kill ring. */
+extern fn int kill_word(int, int) @extern("rl_kill_word");
+extern fn int backward_kill_word(int, int) @extern("rl_backward_kill_word");
+extern fn int kill_line(int, int) @extern("rl_kill_line");
+extern fn int backward_kill_line(int, int) @extern("rl_backward_kill_line");
+extern fn int kill_full_line(int, int) @extern("rl_kill_full_line");
+extern fn int unix_word_rubout(int, int) @extern("rl_unix_word_rubout");
+extern fn int unix_filename_rubout(int, int) @extern("rl_unix_filename_rubout");
+extern fn int unix_line_discard(int, int) @extern("rl_unix_line_discard");
+extern fn int copy_region_to_kill(int, int) @extern("rl_copy_region_to_kill");
+extern fn int kill_region(int, int) @extern("rl_kill_region");
+extern fn int copy_forward_word(int, int) @extern("rl_copy_forward_word");
+extern fn int copy_backward_word(int, int) @extern("rl_copy_backward_word");
+extern fn int yank(int, int) @extern("rl_yank");
+extern fn int yank_pop(int, int) @extern("rl_yank_pop");
+extern fn int yank_nth_arg(int, int) @extern("rl_yank_nth_arg");
+extern fn int yank_last_arg(int, int) @extern("rl_yank_last_arg");
+extern fn int bracketed_paste_begin(int, int) @extern("rl_bracketed_paste_begin");
+
+/* Bindable commands for incremental searching. */
+extern fn int reverse_search_history(int, int) @extern("rl_reverse_search_history");
+extern fn int forward_search_history(int, int) @extern("rl_forward_search_history");
+
+/* Bindable keyboard macro commands. */
+extern fn int start_kbd_macro(int, int) @extern("rl_start_kbd_macro");
+extern fn int end_kbd_macro(int, int) @extern("rl_end_kbd_macro");
+extern fn int call_last_kbd_macro(int, int) @extern("rl_call_last_kbd_macro");
+extern fn int print_last_kbd_macro(int, int) @extern("rl_print_last_kbd_macro");
+
+/* Bindable undo commands. */
+extern fn int revert_line(int, int) @extern("rl_revert_line");
+extern fn int undo_command(int, int) @extern("rl_undo_command");
+
+/* Bindable tilde expansion commands. */
+extern fn int tilde_expand(int, int) @extern("rl_tilde_expand");
+
+/* Bindable terminal control commands. */
+extern fn int restart_output(int, int) @extern("rl_restart_output");
+extern fn int stop_output(int, int) @extern("rl_stop_output");
+
+/* Miscellaneous bindable commands. */
+extern fn int abort(int, int) @extern("rl_abort");
+extern fn int tty_status(int, int) @extern("rl_tty_status");
+
+/* Bindable commands for incremental and non-incremental history searching. */
+extern fn int history_search_forward(int, int) @extern("rl_history_search_forward");
+extern fn int history_search_backward(int, int) @extern("rl_history_search_backward");
+extern fn int history_substr_search_forward(int, int) @extern("rl_history_substr_search_forward");
+extern fn int history_substr_search_backward(int, int) @extern("rl_history_substr_search_backward");
+extern fn int noninc_forward_search(int, int) @extern("rl_noninc_forward_search");
+extern fn int noninc_reverse_search(int, int) @extern("rl_noninc_reverse_search");
+extern fn int noninc_forward_search_again(int, int) @extern("rl_noninc_forward_search_again");
+extern fn int noninc_reverse_search_again(int, int) @extern("rl_noninc_reverse_search_again");
+
+/* Bindable command used when inserting a matching close character. */
+extern fn int insert_close(int, int) @extern("rl_insert_close");
+
+/* Things for vi mode. Not available unless readline is compiled -DVI_MODE. */
+/* VI-mode bindable commands. */
+extern fn int vi_redo(int, int) @extern("rl_vi_redo");
+extern fn int vi_undo(int, int) @extern("rl_vi_undo");
+extern fn int vi_yank_arg(int, int) @extern("rl_vi_yank_arg");
+extern fn int vi_fetch_history(int, int) @extern("rl_vi_fetch_history");
+extern fn int vi_search_again(int, int) @extern("rl_vi_search_again");
+extern fn int vi_search(int, int) @extern("rl_vi_search");
+extern fn int vi_complete(int, int) @extern("rl_vi_complete");
+extern fn int vi_tilde_expand(int, int) @extern("rl_vi_tilde_expand");
+extern fn int vi_prev_word(int, int) @extern("rl_vi_prev_word");
+extern fn int vi_next_word(int, int) @extern("rl_vi_next_word");
+extern fn int vi_end_word(int, int) @extern("rl_vi_end_word");
+extern fn int vi_insert_beg(int, int) @extern("rl_vi_insert_beg");
+extern fn int vi_append_mode(int, int) @extern("rl_vi_append_mode");
+extern fn int vi_append_eol(int, int) @extern("rl_vi_append_eol");
+extern fn int vi_eof_maybe(int, int) @extern("rl_vi_eof_maybe");
+extern fn int vi_insertion_mode(int, int) @extern("rl_vi_insertion_mode");
+extern fn int vi_insert_mode(int, int) @extern("rl_vi_insert_mode");
+extern fn int vi_movement_mode(int, int) @extern("rl_vi_movement_mode");
+extern fn int vi_arg_digit(int, int) @extern("rl_vi_arg_digit");
+extern fn int vi_change_case(int, int) @extern("rl_vi_change_case");
+extern fn int vi_put(int, int) @extern("rl_vi_put");
+extern fn int vi_column(int, int) @extern("rl_vi_column");
+extern fn int vi_delete_to(int, int) @extern("rl_vi_delete_to");
+extern fn int vi_change_to(int, int) @extern("rl_vi_change_to");
+extern fn int vi_yank_to(int, int) @extern("rl_vi_yank_to");
+extern fn int vi_yank_pop(int, int) @extern("rl_vi_yank_pop");
+extern fn int vi_rubout(int, int) @extern("rl_vi_rubout");
+extern fn int vi_delete(int, int) @extern("rl_vi_delete");
+extern fn int vi_back_to_indent(int, int) @extern("rl_vi_back_to_indent");
+extern fn int vi_unix_word_rubout(int, int) @extern("rl_vi_unix_word_rubout");
+extern fn int vi_first_print(int, int) @extern("rl_vi_first_print");
+extern fn int vi_char_search(int, int) @extern("rl_vi_char_search");
+extern fn int vi_match(int, int) @extern("rl_vi_match");
+extern fn int vi_change_char(int, int) @extern("rl_vi_change_char");
+extern fn int vi_subst(int, int) @extern("rl_vi_subst");
+extern fn int vi_overstrike(int, int) @extern("rl_vi_overstrike");
+extern fn int vi_overstrike_delete(int, int) @extern("rl_vi_overstrike_delete");
+extern fn int vi_replace(int, int) @extern("rl_vi_replace");
+extern fn int vi_set_mark(int, int) @extern("rl_vi_set_mark");
+extern fn int vi_goto_mark(int, int) @extern("rl_vi_goto_mark");
+
+/* VI-mode utility functions. */
+extern fn int vi_check() @extern("rl_vi_check");
+extern fn int vi_domove(int, int *) @extern("rl_vi_domove");
+extern fn int vi_bracktype(int) @extern("rl_vi_bracktype");
+
+extern fn void vi_start_inserting(int, int, int) @extern("rl_vi_start_inserting");
+
+/* VI-mode pseudo-bindable commands, used as utility functions. */
+extern fn int vi_fWord(int, int) @extern("rl_vi_fWord");
+extern fn int vi_bWord(int, int) @extern("rl_vi_bWord");
+extern fn int vi_eWord(int, int) @extern("rl_vi_eWord");
+extern fn int vi_fword(int, int) @extern("rl_vi_fword");
+extern fn int vi_bword(int, int) @extern("rl_vi_bword");
+extern fn int vi_eword(int, int) @extern("rl_vi_eword");
+
+/* Read a line of input.  Prompt with PROMPT.  A NULL PROMPT means none. */
+extern fn char *readline(char *) @extern("readline");
+extern fn int set_prompt(char *) @extern("rl_set_prompt");
+extern fn int expand_prompt(char *) @extern("rl_expand_prompt");
+extern fn int initialize() @extern("rl_initialize");
