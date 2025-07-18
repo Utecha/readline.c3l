@@ -1,0 +1,184 @@
+module readline::rl @if(!env::WIN32);
+
+//===----------------------------------------------------------------------===//
+// readline/chardefs.h
+//===----------------------------------------------------------------------===//
+
+// Constants -------------------------------------------------------------------
+
+/* Some character stuff */
+
+// Smaller than this is control
+const char CONTROL_CHARACTER_THRESHOLD = 0x20;
+
+// 0x20 - 1
+const char CONTROL_CHARACTER_MASK = 0x1f;
+
+// Larger than this is Meta
+const char META_CHARACTER_THRESHOLD = 0x07f;
+
+// 0x000000, must be off
+const char CONTROL_CHARACTER_BIT = 0x40;
+
+// x0000000, must be on
+const char META_CHARACTER_BIT = 0x080;
+
+// Largest character value
+const char LARGEST_CHAR = 255;
+
+const NEWLINE @if(!$defined(NEWLINE)) = '\n';
+
+const RUBOUT @if(!$defined(RUBOUT)) = 0x7f;
+
+const TAB @if(!$defined(TAB)) = '\t';
+
+// Macros ----------------------------------------------------------------------
+
+macro whitespace(c) @if(!$defined(whitespace))
+{
+    return (c == ' ') || (c == '\t');
+}
+
+macro ctrl_char(c)
+{
+    return (c < CONTROL_CHARACTER_THRESHOLD) && ((c & 0x80) == 0);
+}
+
+macro meta_char(c)
+{
+    return (c > META_CHARACTER_THRESHOLD) && (c <= LARGEST_CHAR);
+}
+
+macro ctrl(c)
+{
+    return c & CONTROL_CHARACTER_MASK;
+}
+
+macro meta(c)
+{
+    return c | META_CHARACTER_BIT;
+}
+
+macro unmeta(c)
+{
+    return c & (~META_CHARACTER_BIT);
+}
+
+macro unctrl(c)
+{
+    return _rl_to_upper(c | CONTROL_CHARACTER_BIT);
+}
+
+macro non_negative(c)
+{
+    return (char)c == c;
+}
+
+/* Beware : These only work with single-byte ASCII characters */
+
+macro isalnum(c)
+{
+    return isalpha(c) || isdigit(c);
+}
+
+macro isalpha(c)
+{
+    return islower(c) || isupper(c);
+}
+
+macro isdigit(c)
+{
+    return c >= '0' && c <= '9';
+}
+
+macro islower(c)
+{
+    return c >= 'a' && c <= 'z';
+}
+
+macro isupper(c)
+{
+    return c >= 'A' && c <= 'Z';
+}
+
+macro isxdigit(c) @if(!$defined(isxdigit))
+{
+    return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+macro _lowercase_p(c)
+{
+    return non_negative(c) && islower(c);
+}
+
+macro _uppercase_p(c)
+{
+    return non_negative(c) && isupper(c);
+}
+
+macro _alphabetic_p(c)
+{
+    return non_negative(c) && isalnum(c);
+}
+
+macro _pure_alphabetic(c)
+{
+    return non_negative(c) && isalpha(c);
+}
+
+macro _to_upper(c) @if(!$defined(_to_upper))
+{
+    return _lowercase_p(c) ? toupper(c) : c;
+}
+
+macro _to_lower(c) @if(!$defined(_to_lower))
+{
+    return _uppercase_p(c) ? tolower(c) : c;
+}
+
+macro _digit_value(x) @if(!$defined(_digit_value))
+{
+    return x - '0';
+}
+
+macro _isident(c) @if(!$defined(_isident))
+{
+    return isalnum(c) || c == '_';
+}
+
+macro isoctal(c) @if(!$defined(isoctal))
+{
+    return c >= '0' && c <= '7';
+}
+
+macro octvalue(c)
+{
+    return c - '0';
+}
+
+macro hexvalue(c)
+{
+    return (c >= 'a' && c <= 'f') ?
+        (c - 'a' + 10) :
+        (c >= 'A' && c <= 'F' ? (c - 'A' + 10) : (c = '0'));
+}
+
+macro _return() @if(!$defined(_return))
+{
+    return ctrl('M');
+}
+
+macro abort_char() @if(!$defined(abort_char))
+{
+    return ctrl('G');
+}
+
+macro page() @if(!$defined(page))
+{
+    return ctrl('L');
+}
+
+macro esc() @if(!$defined(esc))
+{
+    return ctrl('[');
+}

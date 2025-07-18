@@ -1,0 +1,133 @@
+module readline::rl @if(!env::WIN32);
+import libc, std::time;
+
+//===----------------------------------------------------------------------===//
+// readline/history.h
+//===----------------------------------------------------------------------===//
+
+// Types -----------------------------------------------------------------------
+
+typedef HistData @if(env::LIBC) = void *;
+typedef HistData @if(!env::LIBC) = char *;
+
+/* The structure used to store a history entry */
+struct HistEntry @extern("HIST_ENTRY")
+{
+    char *line;
+    char *timestamp;
+    HistData data;
+}
+
+/* A structure used to pass the current state of the history stuff around */
+struct HistoryState @extern("HISTORY_STATE")
+{
+    HistEntry **entries;    /* Pointer to the entries themselves */
+    int offset;             /* The location pointer within this array */
+    int length;             /* Number of elements within this array */
+    int size;               /* Number of slots allocated to this array */
+    int flags;
+}
+
+// Constants -------------------------------------------------------------------
+
+/* Flag values for the 'flags' member of HISTORY_STATE */
+const HS_STIFLED = 0x01;
+
+// Macros ----------------------------------------------------------------------
+
+/* Size of the history-library-managed space in histroy entry HS */
+macro histent_bytes(hs) @if(env::LIBC)
+{
+    return libc::strlen(hs.line) + libc::strlen(hs.timestamp);
+}
+
+/* Size of the history-library-managed space in histroy entry HS */
+macro histent_bytes(hs) @if(!env::LIBC)
+{
+    return ((ZString)hs.line).len() + ((ZString)hs.timestamp).len();
+}
+
+// FFI -------------------------------------------------------------------------
+
+/* Initialization and state management */
+
+extern int history_base;
+extern int history_length;
+extern int history_max_entries;
+extern int history_offset;
+extern int history_lines_read_from_file;
+extern int history_lines_written_to_file;
+extern char history_expansion_char;
+extern char history_subst_char;
+extern char *history_word_delimiters;
+extern char history_comment_char;
+extern char *history_no_expand_chars;
+extern char *history_search_delimiter_chars;
+extern int history_quotes_inhibit_expansion;
+extern int history_quoting_state;
+extern int history_write_timestamps;
+
+/*
+ * Begin a session in which the history functions might be used.
+ * This just initializes the interactive variables.
+*/
+extern fn void using_history();
+
+/* Return the current HISTORY_STATE of the history */
+extern fn HistoryState *history_get_history_state();
+
+/* Set the state of the current history state to STATE */
+extern fn void history_set_history_state(HistoryState *);
+
+/* Manage the history list */
+
+/*
+ * Place STRING at the end of the history list.
+ * The associated data field (if any) is set to NULL.
+*/
+extern fn void add_history(char *);
+
+/*
+ * Change the timestamp associated with the most recent history
+ * entry to STRING.
+*/
+extern fn void add_history_time(char *);
+
+/*
+ * Remove an entry from the history list. WHICH is the magic number that
+ * tells us which element to delete. The elements are numbered from 0.
+*/
+extern fn HistEntry *remove_history(int);
+
+/* Remove a set of entries from the history list: FIRST to LAST, inclusive */
+extern fn HistEntry **remove_history_range(int, int);
+
+extern fn HistEntry *alloc_history_entry(char *, char *);
+extern fn HistEntry *copy_history_entry(HistEntry *);
+extern fn HistData free_history_entry(HistEntry *);
+extern fn HistEntry *replace_history_entry(int, char *, HistData);
+extern fn void clear_history();
+extern fn void stifle_history(int);
+extern fn int unstifle_history();
+extern fn int history_is_stifled();
+extern fn HistEntry **history_list();
+extern fn int where_history();
+extern fn HistEntry *current_history();
+extern fn HistEntry *history_get(int);
+extern fn Time *history_get_time(HistEntry *);
+extern fn int history_total_bytes();
+extern fn int history_set_pos(int);
+extern fn HistEntry *previous_history();
+extern fn HistEntry *next_history();
+extern fn int history_search(char *, int);
+extern fn int history_search_prefix(char *, int);
+extern fn int history_search_pos(char *, int, int);
+extern fn int read_history(char *);
+extern fn int read_history_range(char *, int, int);
+extern fn int write_history(char *);
+extern fn int append_history(int, char *);
+extern fn int history_truncate_file(char *, int);
+extern fn int history_expand(char *, char **);
+extern fn char *history_arg_extract(int, int, char *);
+extern fn char *get_history_event(char *, int *, int);
+extern fn char **history_tokenize(char *);

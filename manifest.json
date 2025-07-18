@@ -1,5 +1,5 @@
 {
-  "provides" : "readline",
+  "provides" : "libreadline",
   "targets" : {
     "freebsd-x64" : {
       "link-args" : [],
